@@ -1,0 +1,388 @@
+package in.infosys.backend.service;
+
+import in.infosys.backend.dto.RecentSecurityActivityDto;
+import in.infosys.backend.dto.SecurityAnalyticsRequestDto;
+import in.infosys.backend.dto.SecurityAnalyticsResponseDto;
+import in.infosys.backend.entity.AuditLog;
+import in.infosys.backend.entity.LoginActivity;
+import in.infosys.backend.entity.SecurityAlert;
+import in.infosys.backend.repository.AuditLogRepository;
+import in.infosys.backend.repository.LoginActivityRepository;
+import in.infosys.backend.repository.SecurityAlertRepository;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.stereotype.Service;
+
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
+
+@Service
+public class SecurityAnalyticsService {
+
+    private final LoginActivityRepository loginActivityRepository;
+    private final SecurityAlertRepository securityAlertRepository;
+    private final AuditLogRepository auditLogRepository;
+
+    public SecurityAnalyticsService(
+            LoginActivityRepository loginActivityRepository,
+            SecurityAlertRepository securityAlertRepository,
+            AuditLogRepository auditLogRepository) {
+
+        this.loginActivityRepository = loginActivityRepository;
+        this.securityAlertRepository = securityAlertRepository;
+        this.auditLogRepository = auditLogRepository;
+    }
+
+    public SecurityAnalyticsResponseDto getSecurityAnalytics(
+            SecurityAnalyticsRequestDto request) {
+
+        /*
+         * 1. Get currently logged-in user
+         */
+        String username =
+                SecurityContextHolder
+                        .getContext()
+                        .getAuthentication()
+                        .getName();
+
+        /*
+         * 2. Calculate selected date range
+         */
+        DateRange dateRange = calculateDateRange(request);
+
+        LocalDateTime startDateTime =
+                dateRange.startDateTime();
+
+        LocalDateTime endDateTime =
+                dateRange.endDateTime();
+
+        /*
+         * 3. Get current user's login activities
+         *    within selected date range
+         */
+        List<LoginActivity> loginActivities =
+                loginActivityRepository
+                        .findAllByUsernameAndTimestampBetweenOrderByTimestampDesc(
+                                username,
+                                startDateTime,
+                                endDateTime
+                        );
+
+        /*
+         * 4. Calculate successful logins
+         */
+        long successfulLogins =
+                loginActivities
+                        .stream()
+                        .filter(LoginActivity::isSuccess)
+                        .count();
+
+        /*
+         * 5. Calculate failed logins
+         */
+        long failedLogins =
+                loginActivities
+                        .stream()
+                        .filter(activity -> !activity.isSuccess())
+                        .count();
+
+        /*
+         * 6. Get current user's security alerts
+         *    within selected date range
+         */
+        List<SecurityAlert> securityAlerts =
+                securityAlertRepository
+                        .findAllByUsernameAndCreatedAtBetweenOrderByCreatedAtDesc(
+                                username,
+                                startDateTime,
+                                endDateTime
+                        );
+
+        /*
+         * 7. Calculate suspicious activities
+         *
+         * Existing SecurityAlert records represent
+         * suspicious security events.
+         */
+        long suspiciousActivities =
+                securityAlerts.size();
+
+        /*
+         * 8. Calculate active security alerts
+         *
+         * unread/read=false means the alert is still active.
+         */
+        long activeSecurityAlerts =
+                securityAlerts
+                        .stream()
+                        .filter(alert -> !alert.isRead())
+                        .count();
+
+        /*
+         * 9. Get current user's audit logs
+         *    within selected date range
+         */
+        List<AuditLog> auditLogs =
+                auditLogRepository
+                        .findAllByUsernameAndTimestampBetweenOrderByTimestampDesc(
+                                username,
+                                startDateTime,
+                                endDateTime
+                        );
+
+        /*
+         * 10. Build recent security activity
+         */
+        List<RecentSecurityActivityDto> recentActivity =
+                buildRecentSecurityActivity(
+                        loginActivities,
+                        securityAlerts,
+                        auditLogs
+                );
+
+        /*
+         * 11. Return frontend-friendly response
+         *
+         * No Redis/cache is used.
+         * Data comes directly from existing security data.
+         */
+        return new SecurityAnalyticsResponseDto(
+                dateRange.startDate(),
+                dateRange.endDate(),
+                successfulLogins,
+                failedLogins,
+                suspiciousActivities,
+                activeSecurityAlerts,
+                recentActivity
+        );
+    }
+
+    /*
+     * Calculate the requested analytics date range.
+     *
+     * Supported:
+     * TODAY
+     * LAST_7_DAYS
+     * CUSTOM
+     */
+    private DateRange calculateDateRange(
+            SecurityAnalyticsRequestDto request) {
+
+        /*
+         * Default to TODAY if request is missing
+         */
+        if (request == null ||
+                request.getRange() == null ||
+                request.getRange().isBlank()) {
+
+            LocalDate today = LocalDate.now();
+
+            return new DateRange(
+                    today,
+                    today,
+                    today.atStartOfDay(),
+                    today.atTime(LocalTime.MAX)
+            );
+        }
+
+        String range =
+                request.getRange()
+                        .trim()
+                        .toUpperCase();
+
+        LocalDate today = LocalDate.now();
+
+        /*
+         * TODAY
+         */
+        if ("TODAY".equals(range)) {
+
+            return new DateRange(
+                    today,
+                    today,
+                    today.atStartOfDay(),
+                    today.atTime(LocalTime.MAX)
+            );
+        }
+
+        /*
+         * LAST_7_DAYS
+         *
+         * Includes today + previous 6 days.
+         *
+         * Example:
+         * Today = September 23
+         * Start  = September 17
+         * End    = September 23
+         */
+        if ("LAST_7_DAYS".equals(range)) {
+
+            LocalDate startDate =
+                    today.minusDays(6);
+
+            return new DateRange(
+                    startDate,
+                    today,
+                    startDate.atStartOfDay(),
+                    today.atTime(LocalTime.MAX)
+            );
+        }
+
+        /*
+         * CUSTOM
+         */
+        if ("CUSTOM".equals(range)) {
+
+            if (request.getStartDate() == null ||
+                    request.getEndDate() == null) {
+
+                throw new IllegalArgumentException(
+                        "Start date and end date are required for CUSTOM range"
+                );
+            }
+
+            if (request.getStartDate()
+                    .isAfter(request.getEndDate())) {
+
+                throw new IllegalArgumentException(
+                        "Start date cannot be after end date"
+                );
+            }
+
+            LocalDate startDate =
+                    request.getStartDate();
+
+            LocalDate endDate =
+                    request.getEndDate();
+
+            return new DateRange(
+                    startDate,
+                    endDate,
+                    startDate.atStartOfDay(),
+                    endDate.atTime(LocalTime.MAX)
+            );
+        }
+
+        /*
+         * Invalid range
+         */
+        throw new IllegalArgumentException(
+                "Invalid analytics range. Use TODAY, LAST_7_DAYS or CUSTOM"
+        );
+    }
+
+    /*
+     * Combine login activities, security alerts
+     * and audit logs into one recent activity list.
+     */
+    private List<RecentSecurityActivityDto>
+    buildRecentSecurityActivity(
+            List<LoginActivity> loginActivities,
+            List<SecurityAlert> securityAlerts,
+            List<AuditLog> auditLogs) {
+
+        List<RecentSecurityActivityDto> activities =
+                new ArrayList<>();
+
+        /*
+         * Login activities
+         */
+        for (LoginActivity loginActivity : loginActivities) {
+
+            String type;
+            String description;
+
+            if (loginActivity.isSuccess()) {
+
+                type = "LOGIN_SUCCESS";
+                description = "Successful login";
+
+            } else {
+
+                type = "LOGIN_FAILURE";
+                description = "Failed login attempt";
+            }
+
+            activities.add(
+                    new RecentSecurityActivityDto(
+                            type,
+                            description,
+                            loginActivity.getTimestamp()
+                    )
+            );
+        }
+
+        /*
+         * Security alerts
+         */
+        for (SecurityAlert alert : securityAlerts) {
+
+            activities.add(
+                    new RecentSecurityActivityDto(
+                            "SECURITY_ALERT",
+                            alert.getMessage(),
+                            alert.getCreatedAt()
+                    )
+            );
+        }
+
+        /*
+         * Audit logs
+         */
+        for (AuditLog auditLog : auditLogs) {
+
+            String description =
+                    auditLog.getDescription();
+
+            if (description == null ||
+                    description.isBlank()) {
+
+                description =
+                        auditLog.getAction();
+            }
+
+            activities.add(
+                    new RecentSecurityActivityDto(
+                            "AUDIT",
+                            description,
+                            auditLog.getTimestamp()
+                    )
+            );
+        }
+
+        /*
+         * Sort everything by newest first
+         */
+        activities.sort(
+                Comparator.comparing(
+                        RecentSecurityActivityDto::getTimestamp
+                ).reversed()
+        );
+
+        /*
+         * Dashboard only needs latest 10 activities.
+         */
+        if (activities.size() > 10) {
+
+            return new ArrayList<>(
+                    activities.subList(0, 10)
+            );
+        }
+
+        return activities;
+    }
+
+    /*
+     * Internal record used for date range handling.
+     */
+    private record DateRange(
+            LocalDate startDate,
+            LocalDate endDate,
+            LocalDateTime startDateTime,
+            LocalDateTime endDateTime
+    ) {
+    }
+}
