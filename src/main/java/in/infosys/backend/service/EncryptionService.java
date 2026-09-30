@@ -81,8 +81,14 @@ public class EncryptionService {
         }
 
         public String decrypt(String encryptedText) {
-
+            if (encryptedText == null || encryptedText.isBlank()) {
+                return encryptedText;
+            }
             try {
+                // Remove ENC: prefix if present
+                if (encryptedText.startsWith("ENC:")) {
+                    encryptedText = encryptedText.substring(4);
+                }
                 // 1. Decode Base64
                 byte[] combined =
                         Base64.getDecoder().decode(encryptedText);
@@ -141,4 +147,5 @@ public class EncryptionService {
                 throw new RuntimeException("Failed to decrypt password", e);
             }
         }
+
     }

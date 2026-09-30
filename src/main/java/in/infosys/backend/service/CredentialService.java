@@ -13,7 +13,6 @@ import org.springframework.stereotype.Service;
 
 import java.util.List;
 import java.util.Objects;
-import java.util.stream.Collectors;
 
 @Service
 public class CredentialService {
@@ -24,7 +23,13 @@ public class CredentialService {
     private final CredentialShareService credentialShareService;
     private final AuditLogService auditLogService;
 
-    public CredentialService(CredentialRepository credentialRepository, UserRepository userRepository, EncryptionService encryptionService, CredentialShareService credentialShareService, AuditLogService auditLogService) {
+    public CredentialService(
+            CredentialRepository credentialRepository,
+            UserRepository userRepository,
+            EncryptionService encryptionService,
+            CredentialShareService credentialShareService,
+            AuditLogService auditLogService
+    ) {
         this.credentialRepository = credentialRepository;
         this.userRepository = userRepository;
         this.encryptionService = encryptionService;
@@ -32,97 +37,186 @@ public class CredentialService {
         this.auditLogService = auditLogService;
     }
 
-    // create a new credential
-    public CredentialResponseDto createCredential(
-            CredentialCreateRequestDto credentialReq) {
+    // =========================================================
+    // CURRENT USER
+    // =========================================================
 
-        // get currently logged-in username from JWT/SecurityContext
-        String username = Objects.requireNonNull(SecurityContextHolder
+    private User getCurrentUser() {
+
+        String username = Objects.requireNonNull(
+                SecurityContextHolder
                         .getContext()
-                        .getAuthentication())
-                .getName();
+                        .getAuthentication()
+        ).getName();
 
-//        System.out.println("Creating credential for logged-in user: " + username);
-
-        // find the logged-in user from the database
-        User user = userRepository
+        return userRepository
                 .findByUsername(username)
                 .orElseThrow(() ->
                         new RuntimeException("User not found")
                 );
+    }
 
-       // System.out.println("Creating credential for user ID: " + user.getId());
+    // =========================================================
+    // CREATE
+    // =========================================================
 
-        // create a new credential object and set its properties
+    public CredentialResponseDto createCredential(
+            CredentialCreateRequestDto request
+    ) {
+
+        if (request == null) {
+            throw new RuntimeException(
+                    "Credential data is required"
+            );
+        }
+
+        if (request.getTitle() == null ||
+                request.getTitle().isBlank()) {
+
+            throw new RuntimeException(
+                    "Title is required"
+            );
+        }
+
+        User user = getCurrentUser();
+
+        String credentialType = request.getCredentialType();
+
+        if (credentialType == null ||
+                credentialType.isBlank()) {
+
+            credentialType = "WEBSITE_LOGIN";
+        }
+
+        // Secure Note does not require username/password
+        boolean secureNote =
+                "SECURE_NOTE".equalsIgnoreCase(credentialType);
+
+        if (!secureNote &&
+                (request.getUsername() == null ||
+                        request.getUsername().isBlank())) {
+
+            throw new RuntimeException(
+                    "Username is required"
+            );
+        }
+
+        if (!secureNote &&
+                (request.getPassword() == null ||
+                        request.getPassword().isBlank())) {
+
+            throw new RuntimeException(
+                    "Password is required"
+            );
+        }
+
         Credential credential = new Credential();
 
-        credential.setTitle(credentialReq.getTitle());
-        credential.setUsername(credentialReq.getUsername());
-//        credential.setPassword(credentialReq.getPassword());
-        // encrypt the password before saving it to the database
-        credential.setPassword(
-                encryptionService.encrypt(credentialReq.getPassword())
-        );
-        credential.setWebsite(credentialReq.getWebsite());
-        credential.setNotes(encryptNote(credentialReq.getNotes()));
-        credential.setCategory(credentialReq.getCategory());
-        credential.setCredentialType(credentialReq.getCredentialType());
-        credential.setFavorite(Boolean.TRUE.equals(credentialReq.getFavorite()));
-
-        // set owner
         credential.setUser(user);
 
-        // new credential is active * soft delete*
-        credential.setDeleted(false);
-        Credential savedCredential = credentialRepository.save(credential);
+        credential.setTitle(
+                request.getTitle()
+        );
 
-        // Create an audit log entry
+        credential.setUsername(
+                request.getUsername()
+        );
+
+        // Password encryption
+        if (request.getPassword() != null &&
+                !request.getPassword().isBlank()) {
+
+            credential.setPassword(
+                    encryptionService.encrypt(
+                            request.getPassword()
+                    )
+            );
+
+        } else {
+
+            // Secure Note does not need password
+            credential.setPassword("");
+        }
+
+        credential.setWebsite(
+                request.getWebsite()
+        );
+
+        // Notes encryption
+        if (request.getNotes() != null &&
+                !request.getNotes().isBlank()) {
+
+            credential.setNotes(
+                    encryptionService.encrypt(
+                            request.getNotes()
+                    )
+            );
+
+        } else {
+
+            credential.setNotes("");
+        }
+
+        credential.setCategory(
+                request.getCategory()
+        );
+
+        credential.setCredentialType(
+                credentialType
+        );
+
+        credential.setFavorite(
+                request.isFavorite()
+        );
+
+        credential.setDeleted(false);
+
+        Credential savedCredential =
+                credentialRepository.save(credential);
+
         auditLogService.log(
                 "CREATE",
                 "CREDENTIAL",
-                credential.getId(),
-                "Created credential: " + credential.getTitle()
+                savedCredential.getId(),
+                "Created credential: "
+                        + savedCredential.getTitle()
         );
 
-        return CredentialResponseDto.fromEntity(savedCredential);
+        // IMPORTANT:
+        // Return decrypted response, not encrypted DB value
+        return toResponse(savedCredential);
     }
 
-    // get a credential by ID
-    public ResponseEntity<CredentialResponseDto> getCredentialById(Long id) {
+    // =========================================================
+    // GET ONE
+    // =========================================================
 
-        // Get logged-in user from SecurityContext
-        String username = SecurityContextHolder
-                .getContext()
-                .getAuthentication()
-                .getName();
+    public ResponseEntity<CredentialResponseDto>
+    getCredentialById(Long id) {
 
-        User currentUser = userRepository
-                .findByUsername(username)
-                .orElseThrow(() ->
-                        new RuntimeException("User not found")
-                );
+        User currentUser = getCurrentUser();
 
-        // Find credential by ID
-        Credential credential = credentialRepository
-//                .findByIdAndUserAndDeletedFalse(id, user) // update it
-                .findByIdAndDeletedFalse(id)
-                .orElseThrow(() ->
-                        new RuntimeException("Credential not found")
-                );
+        Credential credential =
+                credentialRepository
+                        .findByIdAndDeletedFalse(id)
+                        .orElseThrow(() ->
+                                new RuntimeException(
+                                        "Credential not found"
+                                )
+                        );
 
-        // Check whether user is owner OR has active share permission
-        credentialShareService.canView(credential, currentUser);
+        // Owner/shared-user authorization
+        credentialShareService.canView(
+                credential,
+                currentUser
+        );
 
-        // Convert entity to DTO
+        /*
+         * Authorization is checked BEFORE decrypting
+         * sensitive information.
+         */
         CredentialResponseDto dto =
-                CredentialResponseDto.fromEntity(credential);
-
-        // Decrypt only after access is authorized
-        String decryptedPassword =
-                encryptionService.decrypt(credential.getPassword());
-
-        dto.setPassword(decryptedPassword);
-        dto.setNotes(decryptNote(credential.getNotes()));
+                toResponse(credential);
 
         auditLogService.log(
                 "VIEW",
@@ -135,179 +229,379 @@ public class CredentialService {
         return ResponseEntity.ok(dto);
     }
 
-// get all credentials
-    public ResponseEntity<List<CredentialResponseDto>> getAllCredentials() {
+    // =========================================================
+    // GET ALL
+    // =========================================================
 
-        String username = Objects.requireNonNull(SecurityContextHolder
-                        .getContext()
-                        .getAuthentication())
-                .getName();
+    public ResponseEntity<List<CredentialResponseDto>>
+    getAllCredentials() {
 
-//        System.out.println("Logged-in user: " + username);
-
-        User user = userRepository
-                .findByUsername(username)
-                .orElseThrow(() ->
-                        new RuntimeException("User not found")
-                );
+        User user = getCurrentUser();
 
         List<Credential> credentials =
                 credentialRepository
                         .findAllByUserAndDeletedFalse(user);
 
-        List<CredentialResponseDto> response =
+        return ResponseEntity.ok(
                 credentials.stream()
-                        .map(credential -> {
-
-                            CredentialResponseDto dto =
-                                    CredentialResponseDto.fromEntity(credential);
-
-                            dto.setPassword(
-                                    encryptionService.decrypt(
-                                            credential.getPassword()
-                                    )
-                            );
-                            dto.setNotes(decryptNote(credential.getNotes()));
-
-                            return dto;
-
-                        })
-                        .toList();
-
-        return ResponseEntity.ok(response);
-
+                        .map(this::toResponse)
+                        .toList()
+        );
     }
 
-    public ResponseEntity<List<CredentialResponseDto>> searchCredentials(String search, String category, String type, Boolean favorite) {
-        String username = SecurityContextHolder.getContext().getAuthentication().getName();
-        User user = userRepository.findByUsername(username).orElseThrow(() -> new RuntimeException("User not found"));
-        String q = search == null ? null : search.trim();
-        List<CredentialResponseDto> result = credentialRepository.searchVault(user, q, category, type, favorite)
-                .stream().map(c -> { CredentialResponseDto d=CredentialResponseDto.fromEntity(c);
-                    d.setPassword(encryptionService.decrypt(c.getPassword())); d.setNotes(decryptNote(c.getNotes())); return d; }).toList();
-        return ResponseEntity.ok(result);
+    // =========================================================
+    // SEARCH
+    // =========================================================
+
+    public ResponseEntity<List<CredentialResponseDto>>
+    searchCredentials(String keyword) {
+
+        User user = getCurrentUser();
+
+        if (keyword == null ||
+                keyword.isBlank()) {
+
+            return getAllCredentials();
+        }
+
+        List<Credential> credentials =
+                credentialRepository.searchCredentials(
+                        user,
+                        keyword.trim()
+                );
+
+        return ResponseEntity.ok(
+                credentials.stream()
+                        .map(this::toResponse)
+                        .toList()
+        );
     }
 
-    public ResponseEntity<String> toggleFavorite(Long id) {
-        String username=SecurityContextHolder.getContext().getAuthentication().getName();
-        User user=userRepository.findByUsername(username).orElseThrow(()->new RuntimeException("User not found"));
-        Credential c=credentialRepository.findByIdAndUserAndDeletedFalse(id,user).orElseThrow(()->new RuntimeException("Credential not found"));
-        c.setFavorite(!c.isFavorite()); credentialRepository.save(c);
-        return ResponseEntity.ok(c.isFavorite() ? "Credential added to favorites" : "Credential removed from favorites");
-    }
+    // =========================================================
+    // FILTER
+    // =========================================================
 
-    // update a credential
-    public ResponseEntity<CredentialResponseDto> updateCredential(
-            Long id,
-            CredentialUpdateRequestDto requestDto
+    public ResponseEntity<List<CredentialResponseDto>>
+    filterCredentials(
+            String category,
+            String credentialType,
+            Boolean favorite
     ) {
 
-        String username = Objects.requireNonNull(SecurityContextHolder
-                        .getContext()
-                        .getAuthentication())
-                .getName();
+        User user = getCurrentUser();
 
-       User currentUser = userRepository.findByUsername(username)
-                .orElseThrow(() ->
-                        new RuntimeException("User not found")
-                );
+        List<Credential> credentials;
 
-        // finding credential and checking if it belongs to the logged-in user
-        Credential existingCredential = credentialRepository
-//                .findByIdAndUserAndDeletedFalse(id, user)/*findByIdAndUser(id, user)*/
-                .findByIdAndDeletedFalse(id)  // updated so shared user can access credentials
-                .orElseThrow(() ->
-                        new RuntimeException("Credential not found or access denied")
-                );
+        // Category + Type
+        if (category != null &&
+                !category.isBlank() &&
+                credentialType != null &&
+                !credentialType.isBlank()) {
 
-        // check OWNER or EDIT or MANAGE permission
-        credentialShareService.canEdit(
-                existingCredential, currentUser);
+            credentials =
+                    credentialRepository
+                            .findAllByUserAndCategoryIgnoreCaseAndCredentialTypeIgnoreCaseAndDeletedFalse(
+                                    user,
+                                    category,
+                                    credentialType
+                            );
 
-        // update the existing credential with new values
-        existingCredential.setTitle(requestDto.getTitle());
-        existingCredential.setUsername(requestDto.getUsername());
-//        existingCredential.setPassword(requestDto.getPassword());
-        existingCredential.setPassword(
-                encryptionService.encrypt(requestDto.getPassword())
+        }
+
+        // Category only
+        else if (category != null &&
+                !category.isBlank()) {
+
+            credentials =
+                    credentialRepository
+                            .findAllByUserAndCategoryIgnoreCaseAndDeletedFalse(
+                                    user,
+                                    category
+                            );
+
+        }
+
+        // Type only
+        else if (credentialType != null &&
+                !credentialType.isBlank()) {
+
+            credentials =
+                    credentialRepository
+                            .findAllByUserAndCredentialTypeIgnoreCaseAndDeletedFalse(
+                                    user,
+                                    credentialType
+                            );
+
+        }
+
+        // Favorite only
+        else if (favorite != null) {
+
+            credentials =
+                    credentialRepository
+                            .findAllByUserAndFavoriteAndDeletedFalse(
+                                    user,
+                                    favorite
+                            );
+
+        }
+
+        // No filter
+        else {
+
+            credentials =
+                    credentialRepository
+                            .findAllByUserAndDeletedFalse(
+                                    user
+                            );
+        }
+
+        // Favorite + Category
+        if (favorite != null &&
+                category != null &&
+                !category.isBlank()) {
+
+            credentials =
+                    credentials.stream()
+                            .filter(c ->
+                                    c.isFavorite() == favorite
+                            )
+                            .toList();
+        }
+
+        // Favorite + Type
+        if (favorite != null &&
+                credentialType != null &&
+                !credentialType.isBlank() &&
+                (category == null ||
+                        category.isBlank())) {
+
+            credentials =
+                    credentials.stream()
+                            .filter(c ->
+                                    c.isFavorite() == favorite
+                            )
+                            .toList();
+        }
+
+        return ResponseEntity.ok(
+                credentials.stream()
+                        .map(this::toResponse)
+                        .toList()
         );
-        existingCredential.setWebsite(requestDto.getWebsite());
-        existingCredential.setNotes(encryptNote(requestDto.getNotes()));
-        existingCredential.setCategory(requestDto.getCategory());
-        existingCredential.setCredentialType(requestDto.getCredentialType());
-        if (requestDto.getFavorite() != null) existingCredential.setFavorite(requestDto.getFavorite());
+    }
 
-        Credential updatedCredential = credentialRepository.save(existingCredential);
+    // =========================================================
+    // FAVORITE TOGGLE
+    // =========================================================
 
-        // convert to dto
-        CredentialResponseDto responseDto = CredentialResponseDto.fromEntity(updatedCredential);
+    public ResponseEntity<CredentialResponseDto>
+    toggleFavorite(Long id) {
 
-        // Create an audit log entry
+        User user = getCurrentUser();
+
+        // Favorite belongs to owner's vault.
+        // Shared users cannot change owner's favorite state.
+        Credential credential =
+                credentialRepository
+                        .findByIdAndUserAndDeletedFalse(
+                                id,
+                                user
+                        )
+                        .orElseThrow(() ->
+                                new RuntimeException(
+                                        "Credential not found or access denied"
+                                )
+                        );
+
+        credential.setFavorite(
+                !credential.isFavorite()
+        );
+
+        Credential saved =
+                credentialRepository.save(
+                        credential
+                );
+
         auditLogService.log(
                 "UPDATE",
                 "CREDENTIAL",
-                updatedCredential.getId(),
+                saved.getId(),
+                "Favorite status changed for credential: "
+                        + saved.getTitle()
+        );
+
+        return ResponseEntity.ok(
+                toResponse(saved)
+        );
+    }
+
+    // =========================================================
+    // UPDATE
+    // =========================================================
+
+    public ResponseEntity<CredentialResponseDto>
+    updateCredential(
+            Long id,
+            CredentialUpdateRequestDto request
+    ) {
+
+        User currentUser = getCurrentUser();
+
+        Credential existing =
+                credentialRepository
+                        .findByIdAndDeletedFalse(id)
+                        .orElseThrow(() ->
+                                new RuntimeException(
+                                        "Credential not found or access denied"
+                                )
+                        );
+
+        // Existing sharing permission logic preserved
+        credentialShareService.canEdit(
+                existing,
+                currentUser
+        );
+
+        if (request.getTitle() != null &&
+                !request.getTitle().isBlank()) {
+
+            existing.setTitle(
+                    request.getTitle()
+            );
+        }
+
+        if (request.getUsername() != null) {
+
+            existing.setUsername(
+                    request.getUsername()
+            );
+        }
+
+        // Only encrypt when a new password is supplied
+        if (request.getPassword() != null &&
+                !request.getPassword().isBlank()) {
+
+            existing.setPassword(
+                    encryptionService.encrypt(
+                            request.getPassword()
+                    )
+            );
+        }
+
+        existing.setWebsite(
+                request.getWebsite()
+        );
+
+        // Notes encryption
+        if (request.getNotes() != null &&
+                !request.getNotes().isBlank()) {
+
+            existing.setNotes(
+                    encryptionService.encrypt(
+                            request.getNotes()
+                    )
+            );
+
+        } else {
+
+            existing.setNotes("");
+        }
+
+        if (request.getCategory() != null) {
+
+            existing.setCategory(
+                    request.getCategory()
+            );
+        }
+
+        if (request.getCredentialType() != null &&
+                !request.getCredentialType().isBlank()) {
+
+            existing.setCredentialType(
+                    request.getCredentialType()
+            );
+        }
+
+        existing.setFavorite(
+                request.isFavorite()
+        );
+
+        Credential updated =
+                credentialRepository.save(
+                        existing
+                );
+
+        auditLogService.log(
+                "UPDATE",
+                "CREDENTIAL",
+                updated.getId(),
                 "Updated credential: "
-                        + updatedCredential.getTitle()
+                        + updated.getTitle()
         );
-        return ResponseEntity.ok(responseDto);
+
+        return ResponseEntity.ok(
+                toResponse(updated)
+        );
     }
 
-// delete a credential
-    public ResponseEntity<String> deleteCredential(Long id) {
+    // =========================================================
+    // DELETE
+    // =========================================================
 
-       String username = SecurityContextHolder.getContext()
-                .getAuthentication()
-                .getName();
+    public ResponseEntity<String>
+    deleteCredential(Long id) {
 
-       User user = userRepository.findByUsername(username)
-               .orElseThrow(() ->
-                       new RuntimeException("User not found ")
-               );
+        User user = getCurrentUser();
 
-      Credential credential = credentialRepository. /*findByIdAndUser(id, user)*/
-                findByIdAndUserAndDeletedFalse(id, user)
-               .orElseThrow(() ->
-                       new RuntimeException("Credential not found or access denied")
-               );
+        Credential credential =
+                credentialRepository
+                        .findByIdAndUserAndDeletedFalse(
+                                id,
+                                user
+                        )
+                        .orElseThrow(() ->
+                                new RuntimeException(
+                                        "Credential not found or access denied"
+                                )
+                        );
 
-                credential.setDeleted(true);
-      credentialRepository.save(credential);
-      // create audit log entry
-        auditLogService.log(
-                "DELETE",
-                "CREDENTIAL",
-                credential.getId(),
-                "Deleted credential: "
-                        + credential.getTitle()
+        credentialRepository.delete(
+                credential
         );
-      return ResponseEntity.ok("Credential deleted successfully");
+
+        return ResponseEntity.ok(
+                "Credential deleted successfully"
+        );
     }
 
-    // soft delete a credential
-    public ResponseEntity<String> softDeleteCredential(Long id) {
+    // =========================================================
+    // SOFT DELETE
+    // =========================================================
 
-        String username = SecurityContextHolder.getContext()
-                .getAuthentication()
-                .getName();
+    public ResponseEntity<String>
+    softDeleteCredential(Long id) {
 
-        User user = userRepository.findByUsername(username)
-                .orElseThrow(() ->
-                        new RuntimeException("User not found ")
-                );
+        User user = getCurrentUser();
 
-        // finding active credentials belonging to the logged-in user
-        Credential credential = credentialRepository. /*findByIdAndUser(id, user)*/
-                findByIdAndUserAndDeletedFalse(id, user)
-                .orElseThrow(() ->
-                        new RuntimeException("Credential not found or access denied")
-                );
+        Credential credential =
+                credentialRepository
+                        .findByIdAndUserAndDeletedFalse(
+                                id,
+                                user
+                        )
+                        .orElseThrow(() ->
+                                new RuntimeException(
+                                        "Credential not found or access denied"
+                                )
+                        );
 
-        // mark the credential as deleted --> soft-delete
         credential.setDeleted(true);
-        credentialRepository.save(credential);
 
-        // Create an audit log entry
+        credentialRepository.save(
+                credential
+        );
+
         auditLogService.log(
                 "DELETE",
                 "CREDENTIAL",
@@ -316,46 +610,52 @@ public class CredentialService {
                         + credential.getTitle()
         );
 
-        return ResponseEntity.ok("Credential moved to trash successfully");
+        return ResponseEntity.ok(
+                "Credential moved to trash successfully"
+        );
     }
 
+    // =========================================================
+    // ENTITY -> RESPONSE
+    // =========================================================
 
-    // get all soft deleted credentials
-    public ResponseEntity<List<CredentialResponseDto>> getAllSoftDeletedCredentials() {
-        String username = SecurityContextHolder.getContext()
-                .getAuthentication()
-                .getName();
+    private CredentialResponseDto toResponse(
+            Credential credential
+    ) {
 
-        User user = userRepository.findByUsername(username)
-                .orElseThrow(() ->
-                        new RuntimeException("User not found ")
+        CredentialResponseDto dto =
+                CredentialResponseDto.fromEntity(
+                        credential
                 );
 
-        List<Credential> softDeletedCredentials = credentialRepository
-                .findAllByUserAndDeletedTrue(user);
+        // -----------------------------------------------------
+        // PASSWORD
+        // -----------------------------------------------------
 
-        List<CredentialResponseDto> responseDtos = softDeletedCredentials
-                .stream()
-                .map(this::convertToResponseDto)
-                .collect(Collectors.toList());
+        if (credential.getPassword() != null &&
+                !credential.getPassword().isBlank()) {
 
-        return ResponseEntity.ok(responseDtos);
-    }
+            dto.setPassword(
+                    encryptionService.decrypt(
+                            credential.getPassword()
+                    )
+            );
+        }
 
-    private String encryptNote(String note) {
-        if (note == null || note.isBlank()) return note;
-        return note.startsWith("ENC:") ? note : "ENC:" + encryptionService.encrypt(note);
-    }
+        // -----------------------------------------------------
+        // NOTES
+        // -----------------------------------------------------
 
-    private String decryptNote(String note) {
-        if (note == null || note.isBlank()) return note;
-        if (!note.startsWith("ENC:")) return note;
-        return encryptionService.decrypt(note.substring(4));
-    }
+        if (credential.getNotes() != null &&
+                !credential.getNotes().isBlank()) {
 
-    private CredentialResponseDto convertToResponseDto(Credential credential) {
-        CredentialResponseDto dto = CredentialResponseDto.fromEntity(credential);
-        dto.setNotes(decryptNote(credential.getNotes()));
+            dto.setNotes(
+                    encryptionService.decrypt(
+                            credential.getNotes()
+                    )
+            );
+        }
+
         return dto;
     }
 }

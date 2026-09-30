@@ -4,7 +4,6 @@ import in.infosys.backend.dto.CredentialCreateRequestDto;
 import in.infosys.backend.dto.CredentialResponseDto;
 import in.infosys.backend.dto.CredentialUpdateRequestDto;
 import in.infosys.backend.service.CredentialService;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -12,77 +11,143 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/credential")
+
 public class CredentialController {
 
     private final CredentialService credentialService;
-    public CredentialController(CredentialService credentialService) {
+
+    public CredentialController(
+            CredentialService credentialService
+    ) {
         this.credentialService = credentialService;
     }
 
-    // POST --> Create a new credential
+    // =========================================================
+    // CREATE
+    // =========================================================
+
     @PostMapping
-    public ResponseEntity<CredentialResponseDto> addCredential(
-            @RequestBody CredentialCreateRequestDto credential
-    ){
-       CredentialResponseDto createdCredential = credentialService
-               .createCredential(credential);
-       return ResponseEntity
-               .status(HttpStatus.CREATED)
-               .body(createdCredential);
+    public ResponseEntity<CredentialResponseDto>
+    createCredential(
+            @RequestBody CredentialCreateRequestDto request
+    ) {
+
+        return ResponseEntity.ok(
+                credentialService.createCredential(request)
+        );
     }
 
-    // GET --> Get credential by ID
-    @GetMapping("/search")
-    public ResponseEntity<List<CredentialResponseDto>> search(
-            @RequestParam(required=false) String search,
-            @RequestParam(required=false) String category,
-            @RequestParam(required=false) String type,
-            @RequestParam(required=false) Boolean favorite) {
-        return credentialService.searchCredentials(search, category, type, favorite);
-    }
+    // =========================================================
+    // GET ALL
+    // =========================================================
 
-    @PatchMapping("/{id}/favorite")
-    public ResponseEntity<String> toggleFavorite(@PathVariable Long id) {
-        return credentialService.toggleFavorite(id);
-    }
-
-    @GetMapping("/{id}")
-    public ResponseEntity<CredentialResponseDto> getCredentialById(
-            @PathVariable Long id) {
-        return credentialService.getCredentialById(id);
-    }
-
-    // GET --> Get all credentials
     @GetMapping
-    public ResponseEntity<List<CredentialResponseDto>> getAllCredentials() {
+    public ResponseEntity<List<CredentialResponseDto>>
+    getAllCredentials() {
+
         return credentialService.getAllCredentials();
     }
 
-    // PUT --> Update a credential by ID
-    @PutMapping("/{id}")
-    public  ResponseEntity<CredentialResponseDto> updateCredential(
-            @PathVariable Long id,
-            @RequestBody CredentialUpdateRequestDto credential
-    ){
-        return credentialService.updateCredential(id, credential);
+    // =========================================================
+    // GET ONE
+    // =========================================================
+
+    @GetMapping("/{id}")
+    public ResponseEntity<CredentialResponseDto>
+    getCredentialById(
+            @PathVariable Long id
+    ) {
+
+        return credentialService.getCredentialById(id);
     }
 
-    // DELETE --> Delete a credential by ID
+    // =========================================================
+    // SEARCH
+    // =========================================================
+
+    @GetMapping("/search")
+    public ResponseEntity<List<CredentialResponseDto>>
+    searchCredentials(
+            @RequestParam String keyword
+    ) {
+
+        return credentialService.searchCredentials(
+                keyword
+        );
+    }
+
+    // =========================================================
+    // FILTER
+    // =========================================================
+
+    @GetMapping("/filter")
+    public ResponseEntity<List<CredentialResponseDto>>
+    filterCredentials(
+            @RequestParam(required = false) String category,
+            @RequestParam(required = false) String credentialType,
+            @RequestParam(required = false) Boolean favorite
+    ) {
+
+        return credentialService.filterCredentials(
+                category,
+                credentialType,
+                favorite
+        );
+    }
+
+    // =========================================================
+    // FAVORITE
+    // =========================================================
+
+    @PatchMapping("/{id}/favorite")
+    public ResponseEntity<CredentialResponseDto>
+    toggleFavorite(
+            @PathVariable Long id
+    ) {
+
+        return credentialService.toggleFavorite(id);
+    }
+
+    // =========================================================
+    // UPDATE
+    // =========================================================
+
+    @PutMapping("/{id}")
+    public ResponseEntity<CredentialResponseDto>
+    updateCredential(
+            @PathVariable Long id,
+            @RequestBody CredentialUpdateRequestDto request
+    ) {
+
+        return credentialService.updateCredential(
+                id,
+                request
+        );
+    }
+
+    // =========================================================
+    // DELETE
+    // =========================================================
+
     @DeleteMapping("/{id}")
-    public ResponseEntity<String> deleteCredential(@PathVariable Long id) {
+    public ResponseEntity<String>
+    deleteCredential(
+            @PathVariable Long id
+    ) {
+
         return credentialService.deleteCredential(id);
     }
 
-    // Soft DELETE --> Soft delete a credential by ID
-    @DeleteMapping("/soft-delete/{id}")
-    public ResponseEntity<String> softDeleteCredential(@PathVariable Long id) {
-        return credentialService.softDeleteCredential(id);
-    }
+    // =========================================================
+    // SOFT DELETE
+    // =========================================================
 
-    // get all soft deleted credentials
-    @GetMapping("/soft-deleted")
-    public ResponseEntity<List<CredentialResponseDto>>
-    getAllSoftDeletedCredentials() {
-        return credentialService.getAllSoftDeletedCredentials();
+    @PatchMapping("/{id}/trash")
+    public ResponseEntity<String>
+    softDeleteCredential(
+            @PathVariable Long id
+    ) {
+
+        return credentialService.softDeleteCredential(id);
     }
 }
