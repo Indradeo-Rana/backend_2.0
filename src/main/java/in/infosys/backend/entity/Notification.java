@@ -9,25 +9,26 @@ import lombok.Setter;
 import java.time.LocalDateTime;
 
 @Entity
+@Table(name = "notifications")
 @Getter
 @Setter
 @NoArgsConstructor
 @AllArgsConstructor
-@Table(name = "notifications")
 public class Notification {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @ManyToOne(fetch = FetchType.LAZY)
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "user_id", nullable = false)
     private User user;
 
-    @Column(nullable = false)
-    private String type;
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 50)
+    private NotificationType type;
 
-    @Column(nullable = false)
+    @Column(nullable = false, length = 200)
     private String title;
 
     @Column(nullable = false, length = 2000)
@@ -37,6 +38,17 @@ public class Notification {
     private boolean read = false;
 
     @Column(nullable = false)
-    private LocalDateTime createdAt;
+    private boolean emailSent = false;
 
+    @Column(nullable = false)
+    private boolean pushSent = false;
+
+    @Column(length = 1000)
+    private String emailError;
+
+    @Column(length = 1000)
+    private String pushError;
+
+    @Column(nullable = false)
+    private LocalDateTime createdAt = LocalDateTime.now();
 }

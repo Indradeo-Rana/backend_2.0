@@ -9,6 +9,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Date;
@@ -50,14 +51,6 @@ public class AuthController {
                 .body(createdUser);
     }
 
-//    @PostMapping("/login")
-//    public ResponseEntity<AuthResponseDto> login(
-//            @RequestBody LoginRequestDto request) {
-//        AuthResponseDto response = userService.login(request);
-//
-//        return ResponseEntity.ok(response);
-//    }
-
 // updated login method to record login activity
     @PostMapping("/login")
     public ResponseEntity<AuthResponseDto> login(
@@ -68,8 +61,7 @@ public class AuthController {
 
         try {
 
-            String deviceId =
-                    httpRequest.getHeader("X-Device-Id");
+            String deviceId = httpRequest.getHeader("X-Device-Id");
 
             AuthResponseDto response = userService.login( request, deviceId, httpRequest );
 
@@ -97,10 +89,16 @@ public class AuthController {
                     ipAddress
             );
 
-            if (request != null) {
-                userRepository.findByUsername(request.getUsername()).ifPresent(user ->
-                        notificationService.loginFailure(user, ipAddress));
-            }
+           if(request != null && request.getUsername() != null) {
+
+               String identifier = request.getUsername().trim();
+
+               userRepository.findByUsername(identifier)
+                       .or(() -> userRepository.findByEmail(identifier))
+                       .ifPresent(user -> notificationService
+                               .loginFailure(user, ipAddress)
+                       );
+           }
 
             securityAlertService.checkForSuspiciousActivity(
                     request == null
@@ -155,12 +153,38 @@ public class AuthController {
     @PostMapping("/mfa/enable")
     public ResponseEntity<String> enableMfa(@RequestBody MfaCodeRequestDto request) {
         mfaService.enable(request == null ? null : request.getCode());
+
+        String username = SecurityContextHolder.getContext()
+                .getAuthentication()
+                .getName();
+
+        userRepository.findByUsername(username)
+                .ifPresent(user ->
+                        notificationService.securityNotification(
+                                user,
+                                "MFA enabled",
+                                "MFA has been enabled on your account."
+                        )
+                        );
         return ResponseEntity.ok("MFA enabled");
     }
 
     @PostMapping("/mfa/disable")
     public ResponseEntity<String> disableMfa(@RequestBody MfaCodeRequestDto request) {
         mfaService.disable(request == null ? null : request.getCode());
+
+        String username = SecurityContextHolder.getContext()
+                .getAuthentication()
+                .getName();
+
+        userRepository.findByUsername(username)
+                .ifPresent(user ->
+                        notificationService.securityNotification(
+                                user,
+                                "MFA disabled",
+                                "MFA has been disabled on your account."
+                        )
+                );
         return ResponseEntity.ok("MFA disabled");
     }
 

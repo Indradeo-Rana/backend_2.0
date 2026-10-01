@@ -4,6 +4,7 @@ import in.infosys.backend.dto.SecurityAlertResponseDto;
 import in.infosys.backend.entity.SecurityAlert;
 import in.infosys.backend.repository.LoginActivityRepository;
 import in.infosys.backend.repository.SecurityAlertRepository;
+import in.infosys.backend.repository.UserRepository;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
@@ -24,16 +25,19 @@ public class SecurityAlertService {
     private final LoginActivityRepository loginActivityRepository;
 
     private final SecurityAlertRepository securityAlertRepository;
+    private final UserRepository userRepository;
+    private final NotificationService notificationService;
 
     public SecurityAlertService(
             LoginActivityRepository loginActivityRepository,
-            SecurityAlertRepository securityAlertRepository) {
+            SecurityAlertRepository securityAlertRepository, UserRepository userRepository, NotificationService notificationService) {
 
         this.loginActivityRepository =
                 loginActivityRepository;
-
         this.securityAlertRepository =
                 securityAlertRepository;
+        this.userRepository = userRepository;
+        this.notificationService = notificationService;
     }
 
     // method 1. --? checking
@@ -92,6 +96,19 @@ public class SecurityAlertService {
                 alert.setRead(false);
 
                 securityAlertRepository.save(alert);
+
+                securityAlertRepository.save(alert);
+
+                if (username != null && !username.isBlank()) {
+
+                    userRepository.findByUsername(username)
+                            .ifPresent(user ->
+                                    notificationService.riskAlert(
+                                            user,
+                                            (int) failedAttempts
+                                    )
+                            );
+                }
             }
         }
     }

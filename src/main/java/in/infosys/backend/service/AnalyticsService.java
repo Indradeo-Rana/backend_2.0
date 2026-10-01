@@ -59,10 +59,12 @@ public class AnalyticsService {
 
         for (Credential credential : credentials) {
 
-            String password =
-                    encryptionService.decrypt(
-                            credential.getPassword()
-                    );
+            String password = credential.getPassword();
+
+            // Secure Note / empty password ko skip karo
+            if (password == null || password.isBlank()) {
+                continue;
+            }
 
             PasswordStrengthRequestDto request =
                     new PasswordStrengthRequestDto();

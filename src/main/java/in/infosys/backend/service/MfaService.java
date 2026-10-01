@@ -39,25 +39,68 @@ public class MfaService {
     }
 
     public MfaSetupResponseDto setup() {
+
         User user = currentUser();
-        String secret = TotpUtil.generateSecret();
-        user.setMfaSecret(secret);
-        user.setMfaEnabled(false);
-        userRepository.save(user);
+
+        // If MFA is already enabled, do not disable or regenerate anything
+        if (user.isMfaEnabled()) {
+
+            String secret = user.getMfaSecret();
+
+            String label = user.getEmail() == null || user.getEmail().isBlank()
+                    ? user.getUsername()
+                    : user.getEmail();
+
+            String issuer = "SecureVault";
+
+            String uri = "otpauth://totp/" + issuer + ":" + label
+                    + "?secret=" + secret
+                    + "&issuer=" + issuer
+                    + "&algorithm=SHA1"
+                    + "&digits=6"
+                    + "&period=30";
+
+            return new MfaSetupResponseDto(
+                    secret,
+                    uri,
+                    true
+            );
+        }
+
+        // MFA is not enabled
+        // Reuse existing secret if one already exists
+        String secret = user.getMfaSecret();
+
+        if (secret == null || secret.isBlank()) {
+            secret = TotpUtil.generateSecret();
+            user.setMfaSecret(secret);
+            userRepository.save(user);
+        }
 
         String label = user.getEmail() == null || user.getEmail().isBlank()
                 ? user.getUsername()
                 : user.getEmail();
+
         String issuer = "SecureVault";
+
         String uri = "otpauth://totp/" + issuer + ":" + label
-                + "?secret=" + secret + "&issuer=" + issuer + "&algorithm=SHA1&digits=6&period=30";
+                + "?secret=" + secret
+                + "&issuer=" + issuer
+                + "&algorithm=SHA1"
+                + "&digits=6"
+                + "&period=30";
 
-        return new MfaSetupResponseDto(secret, uri, false);
+        return new MfaSetupResponseDto(
+                secret,
+                uri,
+                false
+        );
     }
-
     public boolean enable(String code) {
         User user = currentUser();
-        if (user.getMfaSecret() == null || !TotpUtil.verifyCode(user.getMfaSecret(), code)) {
+        if (user.getMfaSecret() == null || !TotpUtil.verifyCode(
+                user.getMfaSecret(), code)
+        ) {
             throw new BadCredentialsException("Invalid MFA code");
         }
         user.setMfaEnabled(true);
@@ -169,6 +212,7 @@ public class MfaService {
                 null
         );
     }
+
     private User currentUser() {
         String username = SecurityContextHolder.getContext().getAuthentication().getName();
         return userRepository.findByUsername(username)

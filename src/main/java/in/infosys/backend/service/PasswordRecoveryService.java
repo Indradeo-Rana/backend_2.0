@@ -25,15 +25,17 @@ public class PasswordRecoveryService {
     private final PasswordRecoveryTokenRepository tokenRepository;
     private final PasswordEncoder passwordEncoder;
     private final PasswordRecoveryDeliveryService deliveryService;
+    private final NotificationService notificationService;
 
     public PasswordRecoveryService(UserRepository userRepository,
                                    PasswordRecoveryTokenRepository tokenRepository,
                                    PasswordEncoder passwordEncoder,
-                                   PasswordRecoveryDeliveryService deliveryService) {
+                                   PasswordRecoveryDeliveryService deliveryService, NotificationService notificationService) {
         this.userRepository = userRepository;
         this.tokenRepository = tokenRepository;
         this.passwordEncoder = passwordEncoder;
         this.deliveryService = deliveryService;
+        this.notificationService = notificationService;
     }
 
     @Transactional
@@ -80,9 +82,17 @@ public class PasswordRecoveryService {
         // Never read/decrypt the old password. Only replace its BCrypt hash.
         user.setPassword(passwordEncoder.encode(request.getNewPassword()));
         userRepository.save(user);
+        user.setPasswordChangedAt(LocalDateTime.now());
+        token.setUsed(true);
+        tokenRepository.save(token);
 
         token.setUsed(true);
         tokenRepository.save(token);
+
+        notificationService.securityNotification(user,
+                "Password changed successfully",
+                "Your password has been changed successfully. If you did not initiate this change, please contact support immediately."
+                );
     }
 
     private void validateNewPassword(String password) {

@@ -145,8 +145,11 @@ public class CredentialShareService {
         share =
                 credentialShareRepository.save(share);
 
-        notificationService.create(sharedWith, "SHARING_NOTIFICATION", "Credential shared with you",
-                "A credential named '" + credential.getTitle() + "' was shared with you with " + share.getPermission() + " permission.");
+        notificationService.sharingNotification(
+                sharedWith,
+                credential.getTitle(),
+                share.getPermission().name()
+        );
 
         // Create an audit log entry
         auditLogService.log(
